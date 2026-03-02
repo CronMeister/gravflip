@@ -20,6 +20,7 @@ const GAME_SPEED = 1.8;
 const GRAVITY = 0.35;
 const JUMP_FORCE = -8;
 const BOUNDARY_PADDING = 20;
+const OBSTACLE_SPAWN_DISTANCE = 200;
 
 interface Obstacle {
   id: number;
@@ -147,7 +148,7 @@ export default function HomeScreen() {
         });
 
         const lastObstacle = newObstacles[newObstacles.length - 1];
-        if (!lastObstacle || lastObstacle.x < SCREEN_WIDTH - 350) {
+        if (!lastObstacle || lastObstacle.x < SCREEN_WIDTH - OBSTACLE_SPAWN_DISTANCE) {
           const minGapY = BOUNDARY_PADDING + 80;
           const maxGapY = SCREEN_HEIGHT - OBSTACLE_GAP - BOUNDARY_PADDING - 80;
           const gapY = Math.random() * (maxGapY - minGapY) + minGapY;
@@ -182,6 +183,7 @@ export default function HomeScreen() {
   const buttonBg = isDark ? '#1e40af' : '#3b82f6';
   const buttonText = '#ffffff';
   const boundaryColor = isDark ? '#374151' : '#cbd5e1';
+  const greyedOutColor = isDark ? 'rgba(30, 30, 40, 0.6)' : 'rgba(148, 163, 184, 0.4)';
 
   const scoreText = `${score}`;
   const gameOverText = 'Game Over!';
@@ -197,6 +199,9 @@ export default function HomeScreen() {
     >
       {gameStarted && !gameOver && (
         <>
+          <View style={[styles.greyedOutArea, styles.topGreyedOut, { backgroundColor: greyedOutColor }]} />
+          <View style={[styles.greyedOutArea, styles.bottomGreyedOut, { backgroundColor: greyedOutColor }]} />
+          
           <View style={[styles.boundary, styles.topBoundary, { backgroundColor: boundaryColor }]} />
           <View style={[styles.boundary, styles.bottomBoundary, { backgroundColor: boundaryColor }]} />
         </>
@@ -307,6 +312,19 @@ const styles = StyleSheet.create({
     top: 0,
   },
   bottomObstacle: {},
+  greyedOutArea: {
+    position: 'absolute',
+    width: '100%',
+    zIndex: 1,
+  },
+  topGreyedOut: {
+    top: 0,
+    height: BOUNDARY_PADDING,
+  },
+  bottomGreyedOut: {
+    bottom: 0,
+    height: BOUNDARY_PADDING,
+  },
   boundary: {
     position: 'absolute',
     width: '100%',
