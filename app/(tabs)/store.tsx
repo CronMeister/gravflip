@@ -5,7 +5,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { IconSymbol } from "@/components/IconSymbol";
 import { GlassView } from "expo-glass-effect";
 import { useTheme } from "@react-navigation/native";
-import { apiGet, authenticatedGet, authenticatedPost } from "@/utils/api";
+import { apiGet, apiPost, authenticatedGet, authenticatedPost } from "@/utils/api";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface StoreItem {
@@ -22,6 +22,13 @@ interface UserStats {
   highScore: number;
   weeklyScore: number;
 }
+
+const CATEGORY_INFO: Record<string, { title: string; icon: string; color: string }> = {
+  skin: { title: 'Character Skins', icon: 'palette', color: '#8b5cf6' },
+  world_pack: { title: 'World Packs', icon: 'public', color: '#3b82f6' },
+  shield: { title: 'Shields', icon: 'shield', color: '#10b981' },
+  powerup: { title: 'Power-Ups', icon: 'bolt', color: '#f59e0b' },
+};
 
 export default function StoreScreen() {
   const theme = useTheme();
@@ -46,43 +53,55 @@ export default function StoreScreen() {
   }, [user]);
 
   const loadStoreData = async () => {
-    console.log('[API] Loading store data...');
+    console.log('[Store] Loading store data...');
     try {
       setLoading(true);
 
-      // Fetch store items (public endpoint)
-      const storeItems = await apiGet<StoreItem[]>('/api/store/items');
-      console.log('[API] Store items loaded:', storeItems.length);
+      let storeItems = await apiGet<StoreItem[]>('/api/store/items');
+      console.log('[Store] Store items loaded:', storeItems.length);
+
+      // If no items exist, seed the store with initial items
+      if (storeItems.length === 0) {
+        console.log('[Store] No items found, seeding store...');
+        try {
+          const seedResult = await apiPost<{ created: number; total: number; message: string }>('/api/store/seed', {});
+          console.log('[Store] Seed result:', seedResult);
+          // Reload items after seeding
+          storeItems = await apiGet<StoreItem[]>('/api/store/items');
+          console.log('[Store] Store items after seed:', storeItems.length);
+        } catch (seedError) {
+          console.error('[Store] Error seeding store:', seedError);
+        }
+      }
+
       setItems(storeItems);
 
       if (user) {
-        // Fetch user stats (authenticated)
         try {
           const stats = await authenticatedGet<UserStats>('/api/stats');
-          console.log('[API] User stats loaded:', stats);
+          console.log('[Store] User stats loaded:', stats);
           setUserStats(stats);
         } catch (statsError) {
-          console.error('[API] Error loading stats:', statsError);
+          console.error('[Store] Error loading stats:', statsError);
         }
 
-        // Fetch user purchases (authenticated)
         try {
           const purchases = await authenticatedGet<Array<{ itemId: string }>>('/api/store/purchases');
-          console.log('[API] User purchases loaded:', purchases.length);
+          console.log('[Store] User purchases loaded:', purchases.length);
           setPurchasedItemIds(new Set(purchases.map((p) => p.itemId)));
         } catch (purchasesError) {
-          console.error('[API] Error loading purchases:', purchasesError);
+          console.error('[Store] Error loading purchases:', purchasesError);
         }
       }
     } catch (error) {
-      console.error('[API] Error loading store data:', error);
+      console.error('[Store] Error loading store data:', error);
     } finally {
       setLoading(false);
     }
   };
 
   const handlePurchase = async (itemId: string, price: number) => {
-    console.log('[API] Attempting to purchase item:', itemId);
+    console.log('[Store] Attempting to purchase item:', itemId);
 
     if (!user) {
       showModal('Sign In Required', 'Please sign in to purchase items from the store.');
@@ -90,19 +109,21 @@ export default function StoreScreen() {
     }
     
     if (!userStats || userStats.totalCoins < price) {
-      showModal('Not Enough Coins', `You need ${price} coins but only have ${userStats?.totalCoins || 0} coins.`);
+      const coinsNeeded = price;
+      const coinsHave = userStats?.totalCoins || 0;
+      showModal('Not Enough Coins', `You need ${coinsNeeded} coins but only have ${coinsHave} coins.`);
       return;
     }
     
     try {
       setPurchasing(itemId);
       const result = await authenticatedPost<{ id: string; itemId: string; purchasedAt: string }>('/api/store/purchase', { itemId });
-      console.log('[API] Purchase successful:', result);
+      console.log('[Store] Purchase successful:', result);
       setPurchasedItemIds((prev) => new Set([...prev, itemId]));
       setUserStats((prev) => prev ? { ...prev, totalCoins: prev.totalCoins - price } : null);
       showModal('Purchase Successful! 🎉', 'Item has been added to your collection.');
     } catch (error: any) {
-      console.error('[API] Error purchasing item:', error);
+      console.error('[Store] Error purchasing item:', error);
       const msg = error?.message?.includes('400') ? 'You already own this item.' : 'Purchase failed. Please try again.';
       showModal('Purchase Failed', msg);
     } finally {
@@ -111,15 +132,25 @@ export default function StoreScreen() {
   };
 
   const formatPrice = (priceInCents: number) => {
-    const priceText = `R${(priceInCents / 100).toFixed(2)}`;
+    const rands = (priceInCents / 100).toFixed(0);
+    const priceText = `R${rands}`;
     return priceText;
   };
+
+  const groupedItems = items.reduce((acc, item) => {
+    if (!acc[item.category]) {
+      acc[item.category] = [];
+    }
+    acc[item.category].push(item);
+    return acc;
+  }, {} as Record<string, StoreItem[]>);
 
   if (loading) {
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.colors.background }]} edges={['top']}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={[styles.loadingText, { color: theme.colors.text }]}>Loading store...</Text>
         </View>
       </SafeAreaView>
     );
@@ -168,58 +199,80 @@ export default function StoreScreen() {
           </View>
         </GlassView>
 
-        <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>Store</Text>
+        <Text style={[styles.mainTitle, { color: theme.colors.text }]}>Store</Text>
 
         {items.length === 0 && !loading && (
-          <Text style={[styles.emptyText, { color: theme.dark ? '#98989D' : '#666' }]}>No items available in the store.</Text>
+          <View style={styles.emptyContainer}>
+            <IconSymbol ios_icon_name="cart" android_material_icon_name="shopping-cart" size={64} color={theme.dark ? '#444' : '#ccc'} />
+            <Text style={[styles.emptyText, { color: theme.dark ? '#98989D' : '#666' }]}>No items available yet.</Text>
+            <Text style={[styles.emptySubtext, { color: theme.dark ? '#6b7280' : '#9ca3af' }]}>Check back soon for new items!</Text>
+          </View>
         )}
 
-        {items.map((item) => {
-          const isOwned = purchasedItemIds.has(item.id);
-          const canAfford = !isOwned && userStats && userStats.totalCoins >= item.price;
-          const isPurchasing = purchasing === item.id;
-          const priceDisplay = formatPrice(item.price);
+        {Object.entries(groupedItems).map(([category, categoryItems]) => {
+          const categoryInfo = CATEGORY_INFO[category] || { title: category, icon: 'shopping-bag', color: theme.colors.primary };
           
           return (
-            <GlassView 
-              key={item.id}
-              style={[
-                styles.itemCard,
-                Platform.OS !== 'ios' && { backgroundColor: theme.dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
-              ]} 
-              glassEffectStyle="regular"
-            >
-              <View style={styles.itemHeader}>
+            <View key={category} style={styles.categorySection}>
+              <View style={styles.categoryHeader}>
                 <IconSymbol 
-                  ios_icon_name={item.icon} 
-                  android_material_icon_name={item.icon} 
-                  size={32} 
-                  color={theme.colors.primary} 
+                  ios_icon_name={categoryInfo.icon} 
+                  android_material_icon_name={categoryInfo.icon} 
+                  size={24} 
+                  color={categoryInfo.color} 
                 />
-                <View style={styles.itemInfo}>
-                  <Text style={[styles.itemName, { color: theme.colors.text }]}>{item.name}</Text>
-                  <Text style={[styles.itemDescription, { color: theme.dark ? '#98989D' : '#666' }]}>{item.description}</Text>
-                  <Text style={[styles.itemCategory, { color: theme.dark ? '#6b7280' : '#9ca3af' }]}>{item.category}</Text>
-                </View>
+                <Text style={[styles.categoryTitle, { color: theme.colors.text }]}>{categoryInfo.title}</Text>
               </View>
-              
-              <TouchableOpacity
-                style={[
-                  styles.purchaseButton,
-                  { backgroundColor: isOwned ? '#22c55e' : canAfford ? theme.colors.primary : theme.dark ? '#333' : '#ccc' }
-                ]}
-                onPress={() => !isOwned && handlePurchase(item.id, item.price)}
-                disabled={isOwned || !canAfford || isPurchasing}
-              >
-                {isPurchasing ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : isOwned ? (
-                  <Text style={styles.purchaseButtonText}>✓ Owned</Text>
-                ) : (
-                  <Text style={styles.purchaseButtonText}>{priceDisplay}</Text>
-                )}
-              </TouchableOpacity>
-            </GlassView>
+
+              {categoryItems.map((item) => {
+                const isOwned = purchasedItemIds.has(item.id);
+                const canAfford = !isOwned && userStats && userStats.totalCoins >= item.price;
+                const isPurchasing = purchasing === item.id;
+                const priceDisplay = formatPrice(item.price);
+                
+                return (
+                  <GlassView 
+                    key={item.id}
+                    style={[
+                      styles.itemCard,
+                      Platform.OS !== 'ios' && { backgroundColor: theme.dark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
+                    ]} 
+                    glassEffectStyle="regular"
+                  >
+                    <View style={styles.itemContent}>
+                      <View style={[styles.itemIconContainer, { backgroundColor: categoryInfo.color + '20' }]}>
+                        <IconSymbol 
+                          ios_icon_name={item.icon} 
+                          android_material_icon_name={item.icon} 
+                          size={28} 
+                          color={categoryInfo.color} 
+                        />
+                      </View>
+                      <View style={styles.itemInfo}>
+                        <Text style={[styles.itemName, { color: theme.colors.text }]}>{item.name}</Text>
+                        <Text style={[styles.itemDescription, { color: theme.dark ? '#98989D' : '#666' }]} numberOfLines={2}>{item.description}</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={[
+                          styles.purchaseButton,
+                          { backgroundColor: isOwned ? '#22c55e' : canAfford ? categoryInfo.color : theme.dark ? '#333' : '#ccc' }
+                        ]}
+                        onPress={() => !isOwned && handlePurchase(item.id, item.price)}
+                        disabled={isOwned || !canAfford || isPurchasing}
+                      >
+                        {isPurchasing ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : isOwned ? (
+                          <IconSymbol ios_icon_name="checkmark" android_material_icon_name="check" size={18} color="#fff" />
+                        ) : (
+                          <Text style={styles.purchaseButtonText}>{priceDisplay}</Text>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </GlassView>
+                );
+              })}
+            </View>
           );
         })}
       </ScrollView>
@@ -244,11 +297,15 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 16,
   },
   coinsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
+    borderRadius: 16,
     padding: 20,
     marginBottom: 24,
     gap: 16,
@@ -257,55 +314,81 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   coinsAmount: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: 'bold',
   },
-  sectionTitle: {
-    fontSize: 24,
+  mainTitle: {
+    fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 16,
+    marginBottom: 24,
+  },
+  categorySection: {
+    marginBottom: 28,
+  },
+  categoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  categoryTitle: {
+    fontSize: 20,
+    fontWeight: '700',
   },
   itemCard: {
     borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    gap: 12,
+    padding: 14,
+    marginBottom: 10,
   },
-  itemHeader: {
+  itemContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  itemIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   itemInfo: {
     flex: 1,
   },
   itemName: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   itemDescription: {
-    fontSize: 14,
+    fontSize: 13,
+    lineHeight: 18,
   },
   purchaseButton: {
     borderRadius: 8,
-    padding: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minWidth: 70,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   purchaseButtonText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
   },
-  itemCategory: {
-    fontSize: 12,
-    marginTop: 2,
-    textTransform: 'capitalize',
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 12,
   },
   emptyText: {
-    textAlign: 'center',
-    fontSize: 16,
-    marginTop: 40,
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  emptySubtext: {
+    fontSize: 14,
   },
   modalOverlay: {
     flex: 1,
