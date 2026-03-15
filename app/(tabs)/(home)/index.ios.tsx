@@ -345,12 +345,10 @@ export default function HomeScreen() {
       const minY = BOUNDARY_PADDING;
       const maxY = SCREEN_HEIGHT - PLAYER_SIZE - BOUNDARY_PADDING;
 
-      if (newPlayerY < minY) {
-        newPlayerY = minY;
-        playerVelocity.current = 0;
-      } else if (newPlayerY > maxY) {
-        newPlayerY = maxY;
-        playerVelocity.current = 0;
+      if (newPlayerY < minY || newPlayerY > maxY) {
+        console.log("Player went out of bounds at Y:", newPlayerY.toFixed(1), "- triggering game over");
+        runOnJS(endGame)();
+        return;
       }
 
       playerY.value = newPlayerY;
@@ -432,15 +430,7 @@ export default function HomeScreen() {
       style={[styles.container, { backgroundColor }]}
       onPress={flipGravity}
     >
-      {gameStarted && !gameOver && (
-        <>
-          <View style={[styles.greyedOutArea, styles.topGreyedOut, { backgroundColor: greyedOutColor }]} />
-          <View style={[styles.greyedOutArea, styles.bottomGreyedOut, { backgroundColor: greyedOutColor }]} />
-          
-          <View style={[styles.boundary, styles.topBoundary, { backgroundColor: boundaryColor }]} />
-          <View style={[styles.boundary, styles.bottomBoundary, { backgroundColor: boundaryColor }]} />
-        </>
-      )}
+
 
       {gameStarted && !gameOver && (
         <View style={styles.scoreContainer}>
@@ -537,7 +527,7 @@ export default function HomeScreen() {
           style={styles.menuScrollView}
           contentContainerStyle={styles.menuContainer}
         >
-          <Text style={[styles.title, { color: textColor }]}>Gravity Flip</Text>
+          <Text style={[styles.title, { color: textColor }]}>GravFlip</Text>
           
           <GlassView style={styles.highScoreCard} glassEffectStyle="regular">
             <IconSymbol ios_icon_name="trophy.fill" android_material_icon_name="star" size={32} color="#FFD700" />
