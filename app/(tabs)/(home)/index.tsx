@@ -47,6 +47,15 @@ const FLOATING_CHANCE = 0.60; // 60% chance for floating obstacles
 const EDGE_ZONE_PERCENTAGE = 0.25; // Top/bottom 25% of playable area
 const EDGE_BIAS_CHANCE = 0.65; // 65% of floating obstacles spawn near edges
 
+// Speed scaling: speed = GAME_SPEED * min(MAX_SPEED_MULTIPLIER, 1 + score * SPEED_SCALE_RATE)
+const SPEED_SCALE_RATE = 0.02;
+const MAX_SPEED_MULTIPLIER = 3.0;
+
+// Spawn interval scaling (ms): max(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - score * INTERVAL_REDUCTION_PER_POINT)
+const BASE_SPAWN_INTERVAL = 1400;
+const INTERVAL_REDUCTION_PER_POINT = 12;
+const MIN_SPAWN_INTERVAL = 600;
+
 interface Obstacle {
   id: number;
   x: number;
@@ -85,7 +94,9 @@ export default function HomeScreen() {
   const gravityDirection = useRef(1);
   const obstacleCounter = useRef(0);
   const gameLoopRef = useRef<NodeJS.Timeout | null>(null);
+  const spawnTimerRef = useRef<NodeJS.Timeout | null>(null);
   const consecutiveEasyObstacles = useRef(0); // Track consecutive full obstacles
+  const scoreRef = useRef(0); // Mirror of score state for use inside game loop
 
   const playerAnimatedStyle = useAnimatedStyle(() => {
     return {
@@ -164,6 +175,7 @@ export default function HomeScreen() {
 
   const startGame = () => {
     console.log("Starting new game");
+    scoreRef.current = 0;
     setGameStarted(true);
     setGameOver(false);
     setScore(0);
@@ -256,10 +268,91 @@ export default function HomeScreen() {
     return false;
   };
 
+  // Spawn a single obstacle, called by the interval-based spawn timer
+  const spawnObstacle = () => {
+    const currentScore = scoreRef.current;
+    const forceChallengingObstacle = consecutiveEasyObstacles.current >= 4;
+    let randomChoice = Math.random();
+    if (forceChallengingObstacle) {
+      randomChoice = Math.random() * (WALL_CHANCE + FLOATING_CHANCE);
+      console.log("Forcing challenging obstacle after", consecutiveEasyObstacles.current, "easy obstacles");
+    }
+
+    const speedMultiplier = Math.min(MAX_SPEED_MULTIPLIER, 1 + currentScore * SPEED_SCALE_RATE);
+    const spawnInterval = Math.max(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - currentScore * INTERVAL_REDUCTION_PER_POINT);
+
+    if (randomChoice < WALL_CHANCE) {
+      const minWallY = BOUNDARY_PADDING + 100;
+      const maxWallY = SCREEN_HEIGHT - BOUNDARY_PADDING - WALL_OBSTACLE_HEIGHT - 100;
+      const wallY = Math.random() * (maxWallY - minWallY) + minWallY;
+      const minGapX = 80;
+      const maxGapX = SCREEN_WIDTH - WALL_GAP_SIZE - 80;
+      const wallGapX = Math.random() * (maxGapX - minGapX) + minGapX;
+      setObstacles((prev) => [
+        ...prev,
+        { id: obstacleCounter.current++, x: SCREEN_WIDTH, gapY: 0, wallY, wallGapX, passed: false, type: 'wall' },
+      ]);
+      consecutiveEasyObstacles.current = 0;
+      console.log("Spawned wall obstacle - score:", currentScore, "speed multiplier:", speedMultiplier.toFixed(2), "spawn interval:", spawnInterval);
+    } else if (randomChoice < WALL_CHANCE + FLOATING_CHANCE) {
+      const playableHeight = SCREEN_HEIGHT - BOUNDARY_PADDING * 2 - FLOATING_OBSTACLE_SIZE;
+      const edgeZoneHeight = playableHeight * EDGE_ZONE_PERCENTAGE;
+      let floatingY: number;
+      const spawnNearEdge = Math.random() < EDGE_BIAS_CHANCE;
+      if (spawnNearEdge) {
+        const spawnAtTop = Math.random() < 0.5;
+        if (spawnAtTop) {
+          floatingY = BOUNDARY_PADDING + Math.random() * edgeZoneHeight;
+        } else {
+          floatingY = SCREEN_HEIGHT - BOUNDARY_PADDING - FLOATING_OBSTACLE_SIZE - Math.random() * edgeZoneHeight;
+        }
+        console.log("Spawned edge floating obstacle at Y:", floatingY.toFixed(0), "- score:", currentScore, "speed multiplier:", speedMultiplier.toFixed(2));
+      } else {
+        const minFloatingY = BOUNDARY_PADDING + edgeZoneHeight;
+        const maxFloatingY = SCREEN_HEIGHT - BOUNDARY_PADDING - FLOATING_OBSTACLE_SIZE - edgeZoneHeight;
+        floatingY = Math.random() * (maxFloatingY - minFloatingY) + minFloatingY;
+        console.log("Spawned center floating obstacle at Y:", floatingY.toFixed(0), "- score:", currentScore, "speed multiplier:", speedMultiplier.toFixed(2));
+      }
+      setObstacles((prev) => [
+        ...prev,
+        { id: obstacleCounter.current++, x: SCREEN_WIDTH, gapY: 0, floatingY, passed: false, type: 'floating' },
+      ]);
+      consecutiveEasyObstacles.current = 0;
+    } else {
+      const minGapY = BOUNDARY_PADDING + 80;
+      const maxGapY = SCREEN_HEIGHT - OBSTACLE_GAP - BOUNDARY_PADDING - 80;
+      const gapY = Math.random() * (maxGapY - minGapY) + minGapY;
+      setObstacles((prev) => [
+        ...prev,
+        { id: obstacleCounter.current++, x: SCREEN_WIDTH, gapY, passed: false, type: 'full' },
+      ]);
+      consecutiveEasyObstacles.current++;
+      console.log("Spawned full obstacle - score:", currentScore, "speed multiplier:", speedMultiplier.toFixed(2), "consecutive easy:", consecutiveEasyObstacles.current);
+    }
+  };
+
+  // Restart the spawn timer with the current score-based interval
+  const restartSpawnTimer = () => {
+    if (spawnTimerRef.current) clearTimeout(spawnTimerRef.current);
+    const currentScore = scoreRef.current;
+    const interval = Math.max(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - currentScore * INTERVAL_REDUCTION_PER_POINT);
+    spawnTimerRef.current = setTimeout(() => {
+      spawnObstacle();
+      restartSpawnTimer();
+    }, interval);
+  };
+
   useEffect(() => {
     if (!gameStarted || gameOver) return;
 
+    // Kick off the first spawn immediately then keep scheduling
+    restartSpawnTimer();
+
     gameLoopRef.current = setInterval(() => {
+      const currentScore = scoreRef.current;
+      const speedMultiplier = Math.min(MAX_SPEED_MULTIPLIER, 1 + currentScore * SPEED_SCALE_RATE);
+      const currentSpeed = GAME_SPEED * speedMultiplier;
+
       playerVelocity.current += GRAVITY * gravityDirection.current;
       let newPlayerY = playerY.value + playerVelocity.current;
 
@@ -281,7 +374,7 @@ export default function HomeScreen() {
       setObstacles((prevObstacles) => {
         let newObstacles = prevObstacles.map((obs) => ({
           ...obs,
-          x: obs.x - GAME_SPEED,
+          x: obs.x - currentSpeed,
         }));
 
         newObstacles = newObstacles.filter((obs) => {
@@ -291,132 +384,24 @@ export default function HomeScreen() {
           return obs.x > -OBSTACLE_WIDTH;
         });
 
-        let currentScore = 0;
+        let currentScoreDelta = 0;
         newObstacles.forEach((obs) => {
           if (!obs.passed) {
             const passThreshold = obs.type === 'wall' ? obs.x + SCREEN_WIDTH : obs.x + OBSTACLE_WIDTH;
             if (passThreshold < 50) {
               obs.passed = true;
-              currentScore++;
+              currentScoreDelta++;
             }
           }
         });
-        
-        if (currentScore > 0) {
+
+        if (currentScoreDelta > 0) {
           runOnJS(setScore)((s) => {
-            const newScore = s + currentScore;
-            console.log("Score increased to:", newScore);
+            const newScore = s + currentScoreDelta;
+            scoreRef.current = newScore;
+            console.log("Score increased to:", newScore, "| speed multiplier:", Math.min(MAX_SPEED_MULTIPLIER, 1 + newScore * SPEED_SCALE_RATE).toFixed(2), "| spawn interval:", Math.max(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - newScore * INTERVAL_REDUCTION_PER_POINT), "ms");
             return newScore;
           });
-        }
-
-        const difficultyMultiplier = Math.max(0, 1 - (score * DIFFICULTY_INCREASE_RATE));
-        const currentFullObstacleDistance = Math.max(
-          MIN_FULL_OBSTACLE_DISTANCE,
-          OBSTACLE_SPAWN_DISTANCE * difficultyMultiplier
-        );
-        const currentFloatingObstacleDistance = Math.max(
-          MIN_FLOATING_OBSTACLE_DISTANCE,
-          FLOATING_OBSTACLE_SPAWN_DISTANCE * difficultyMultiplier
-        );
-
-        const lastObstacle = newObstacles[newObstacles.length - 1];
-        const shouldSpawnFullObstacle = !lastObstacle || 
-          (lastObstacle.type === 'full' && lastObstacle.x < SCREEN_WIDTH - currentFullObstacleDistance) ||
-          (lastObstacle.type === 'floating' && lastObstacle.x < SCREEN_WIDTH - currentFullObstacleDistance) ||
-          (lastObstacle.type === 'wall' && lastObstacle.x < SCREEN_WIDTH - currentFullObstacleDistance);
-        
-        const shouldSpawnFloatingObstacle = !lastObstacle || 
-          lastObstacle.x < SCREEN_WIDTH - currentFloatingObstacleDistance;
-
-        if (shouldSpawnFloatingObstacle) {
-          // Force floating or wall obstacle if too many consecutive easy obstacles
-          const forceChallengingObstacle = consecutiveEasyObstacles.current >= 4;
-          
-          let randomChoice = Math.random();
-          
-          // If forcing challenging obstacle, skip full obstacle chance
-          if (forceChallengingObstacle) {
-            randomChoice = Math.random() * (WALL_CHANCE + FLOATING_CHANCE);
-            console.log("Forcing challenging obstacle after", consecutiveEasyObstacles.current, "easy obstacles");
-          }
-          
-          if (randomChoice < WALL_CHANCE) {
-            // Spawn wall obstacle (30% chance)
-            if (shouldSpawnFullObstacle) {
-              const minWallY = BOUNDARY_PADDING + 100;
-              const maxWallY = SCREEN_HEIGHT - BOUNDARY_PADDING - WALL_OBSTACLE_HEIGHT - 100;
-              const wallY = Math.random() * (maxWallY - minWallY) + minWallY;
-              
-              const minGapX = 80;
-              const maxGapX = SCREEN_WIDTH - WALL_GAP_SIZE - 80;
-              const wallGapX = Math.random() * (maxGapX - minGapX) + minGapX;
-              
-              newObstacles.push({
-                id: obstacleCounter.current++,
-                x: SCREEN_WIDTH,
-                gapY: 0,
-                wallY,
-                wallGapX,
-                passed: false,
-                type: 'wall',
-              });
-              consecutiveEasyObstacles.current = 0;
-              console.log("Spawned wall obstacle at Y:", wallY, "with gap at X:", wallGapX, "- Difficulty:", difficultyMultiplier.toFixed(2));
-            }
-          } else if (randomChoice < WALL_CHANCE + FLOATING_CHANCE) {
-            // Spawn floating obstacle (60% chance) - bias toward edges
-            const playableHeight = SCREEN_HEIGHT - BOUNDARY_PADDING * 2 - FLOATING_OBSTACLE_SIZE;
-            const edgeZoneHeight = playableHeight * EDGE_ZONE_PERCENTAGE;
-            
-            let floatingY;
-            const spawnNearEdge = Math.random() < EDGE_BIAS_CHANCE;
-            
-            if (spawnNearEdge) {
-              // Spawn in edge zones (top 25% or bottom 25% of playable area)
-              const spawnAtTop = Math.random() < 0.5;
-              if (spawnAtTop) {
-                // Top edge zone
-                floatingY = BOUNDARY_PADDING + Math.random() * edgeZoneHeight;
-              } else {
-                // Bottom edge zone
-                floatingY = SCREEN_HEIGHT - BOUNDARY_PADDING - FLOATING_OBSTACLE_SIZE - Math.random() * edgeZoneHeight;
-              }
-              console.log("Spawned edge floating obstacle at Y:", floatingY.toFixed(0), "(edge zone)");
-            } else {
-              // Spawn in middle zone
-              const minFloatingY = BOUNDARY_PADDING + edgeZoneHeight;
-              const maxFloatingY = SCREEN_HEIGHT - BOUNDARY_PADDING - FLOATING_OBSTACLE_SIZE - edgeZoneHeight;
-              floatingY = Math.random() * (maxFloatingY - minFloatingY) + minFloatingY;
-              console.log("Spawned center floating obstacle at Y:", floatingY.toFixed(0), "(center zone)");
-            }
-            
-            newObstacles.push({
-              id: obstacleCounter.current++,
-              x: SCREEN_WIDTH,
-              gapY: 0,
-              floatingY,
-              passed: false,
-              type: 'floating',
-            });
-            consecutiveEasyObstacles.current = 0;
-          } else {
-            // Spawn full vertical obstacle (10% chance)
-            if (shouldSpawnFullObstacle) {
-              const minGapY = BOUNDARY_PADDING + 80;
-              const maxGapY = SCREEN_HEIGHT - OBSTACLE_GAP - BOUNDARY_PADDING - 80;
-              const gapY = Math.random() * (maxGapY - minGapY) + minGapY;
-              newObstacles.push({
-                id: obstacleCounter.current++,
-                x: SCREEN_WIDTH,
-                gapY,
-                passed: false,
-                type: 'full',
-              });
-              consecutiveEasyObstacles.current++;
-              console.log("Spawned full obstacle with gap at Y:", gapY, "- Consecutive easy:", consecutiveEasyObstacles.current, "- Difficulty:", difficultyMultiplier.toFixed(2));
-            }
-          }
         }
 
         if (checkCollision(newPlayerY, newObstacles)) {
@@ -431,8 +416,11 @@ export default function HomeScreen() {
       if (gameLoopRef.current) {
         clearInterval(gameLoopRef.current);
       }
+      if (spawnTimerRef.current) {
+        clearTimeout(spawnTimerRef.current);
+      }
     };
-  }, [gameStarted, gameOver, score]);
+  }, [gameStarted, gameOver]);
 
   const isDark = theme.dark;
   const backgroundColor = isDark ? '#0a0a0f' : '#e0f2ff';

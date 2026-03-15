@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "make-a-gravity-flipp",
-    "slug": "make-a-gravity-flipp",
+    "name": "gravflip",
+    "slug": "gravflip",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/app-icon-nsk.png",
@@ -36,7 +36,7 @@
       "expo-router",
       "expo-web-browser"
     ],
-    "scheme": "make-a-gravity-flipp",
+    "scheme": "gravflip",
     "experiments": {
       "typedRoutes": true
     },
