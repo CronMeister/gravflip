@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { StyleSheet, View, Text, TouchableOpacity, Dimensions, Platform, ScrollView } from "react-native";
 import { useTheme } from "@react-navigation/native";
 import { useRouter } from "expo-router";
@@ -107,11 +107,7 @@ export default function HomeScreen() {
     };
   });
 
-  useEffect(() => {
-    loadGameData();
-  }, [user]);
-
-  const loadGameData = async () => {
+  const loadGameData = useCallback(async () => {
     console.log('[API] Loading game data...');
     try {
       // Fetch high score from stats (authenticated)
@@ -126,7 +122,7 @@ export default function HomeScreen() {
 
         // Fetch daily objectives (authenticated)
         try {
-          const objectivesData = await authenticatedGet<Array<{
+          const objectivesData = await authenticatedGet<{
             objective: {
               id: string;
               title: string;
@@ -139,7 +135,7 @@ export default function HomeScreen() {
               progress: number;
               completed: boolean;
             };
-          }>>('/api/objectives/daily');
+          }[]>('/api/objectives/daily');
           console.log('[API] Daily objectives loaded:', objectivesData);
           const mapped: DailyObjective[] = objectivesData.map((item) => ({
             id: item.objective.id,
@@ -159,7 +155,11 @@ export default function HomeScreen() {
     } catch (error) {
       console.error('[API] Error loading game data:', error);
     }
-  };
+  }, [user]);
+
+  useEffect(() => {
+    loadGameData();
+  }, [loadGameData]);
 
   const flipGravity = () => {
     if (!gameStarted || gameOver) return;
@@ -416,6 +416,7 @@ export default function HomeScreen() {
         clearTimeout(spawnTimerRef.current);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gameStarted, gameOver]);
 
   const isDark = theme.dark;

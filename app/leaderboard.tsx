@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Stack, useRouter } from "expo-router";
@@ -28,18 +28,14 @@ export default function LeaderboardScreen() {
   const [loading, setLoading] = useState(true);
   const [userPosition, setUserPosition] = useState<{ weeklyRank: number; weeklyScore: number; alltimeRank: number; highScore: number } | null>(null);
 
-  useEffect(() => {
-    loadLeaderboard();
-  }, [leaderboardType, user]);
-
-  const loadLeaderboard = async () => {
+  const loadLeaderboard = useCallback(async () => {
     console.log('[API] Loading leaderboard:', leaderboardType);
     try {
       setLoading(true);
 
       // Fetch leaderboard data (public endpoints)
       if (leaderboardType === 'weekly') {
-        const data = await apiGet<Array<{ rank: number; userId: string; name: string; weeklyScore: number; image?: string | null }>>('/api/leaderboard/weekly');
+        const data = await apiGet<{ rank: number; userId: string; name: string; weeklyScore: number; image?: string | null }[]>('/api/leaderboard/weekly');
         console.log('[API] Weekly leaderboard loaded:', data.length, 'entries');
         setEntries(data.map((e) => ({
           userId: e.userId,
@@ -49,7 +45,7 @@ export default function LeaderboardScreen() {
           image: e.image,
         })));
       } else {
-        const data = await apiGet<Array<{ rank: number; userId: string; name: string; highScore: number; image?: string | null }>>('/api/leaderboard/alltime');
+        const data = await apiGet<{ rank: number; userId: string; name: string; highScore: number; image?: string | null }[]>('/api/leaderboard/alltime');
         console.log('[API] All-time leaderboard loaded:', data.length, 'entries');
         setEntries(data.map((e) => ({
           userId: e.userId,
@@ -78,7 +74,11 @@ export default function LeaderboardScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [leaderboardType, user]);
+
+  useEffect(() => {
+    loadLeaderboard();
+  }, [loadLeaderboard]);
 
   const getRankColor = (rank: number) => {
     if (rank === 1) return '#FFD700';
